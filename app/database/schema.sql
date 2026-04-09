@@ -11,17 +11,17 @@ CREATE TABLE IF NOT EXISTS tokens (
 	-- Unique token identifier (from JWT)
 	jti TEXT PRIMARY KEY,
 
-	-- Groups tokens from same login session
-	family_id TEXT NOT NULL,
-
 	-- Owner of the token
 	user_id INTEGER NOT NULL,
 
-	-- User-Agent for session management UI
-	device_info TEXT,
+	-- Token type
+	token_type TEXT NOT NULL,
+
+	-- Token
+	token TEXT NOT NULL,
 
 	-- When token was issued
-	created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+	issued_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 
 	-- When token becomes invalid
 	expires_at TIMESTAMP NOT NULL,

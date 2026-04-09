@@ -22,6 +22,11 @@ class SQLiteManagement:
 
     def __exit__(self, exc_type, exc_value, traceback) -> bool:
         if self.__connection:
+            if exc_type is None:
+                self.__connection.commit()
+            else:
+                self.__connection.rollback()
+
             print("Cerrando la conexión a la base de datos.")
             self.__connection.close()
             self.__connection = None
@@ -52,16 +57,15 @@ class SQLiteManagement:
             raise ValueError(f"Error: {e}")
 
 
-    def execute(self, query: str) -> None:
-        """
-        Data Definition Language
-        """
+    def execute(self, query: str, params: Sequence | None = None) -> None:
         if not query:
             raise ValueError("Consulta vacía o inexistente.")
 
         try:
             cursor = self._get_cursor()
-            cursor.execute(query)
+
+            print(f"Procesando query:", query)
+            cursor.execute(query, params or ())
             self.__connection.commit()
         except sqlite3.Error as e:
             raise ValueError(f"Error: {e}")
@@ -73,15 +77,11 @@ class SQLiteManagement:
 
         try:
             cursor = self._get_cursor()
+
+            print(f"Procesando query:", query)
             cursor.execute(query, params or ())
             rows = cursor.fetchall()
 
-            # columns = [
-            #     column[0] for column in cursor.description
-            # ] if cursor.description else []
-
-            # return [dict(row) for row in rows]
-            # return cursor.rowcount()
             return [dict(row) for row in rows]
         except sqlite3.Error as e:
             raise ValueError(f"Error al procesar la consulta: {e}")

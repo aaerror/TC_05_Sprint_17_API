@@ -1,5 +1,7 @@
 from datetime import datetime, timedelta, timezone
 
+from app.database import db_user, db_token
+
 from fastapi import APIRouter, Depends, Request
 from fastapi import HTTPException, status
 from fastapi.responses import JSONResponse
@@ -37,7 +39,7 @@ def create_access_token(
     expiry: Optional[timedelta] = None
 ) -> str:
     """Create a short-lived access token for API authentication"""
-    to_encode = data.copy()                     # Don't modify original data
+    to_encode = data.copy()                        # Don't modify original data
 
     now = datetime.now(timezone.utc)
     # Calculate expiration time
@@ -47,25 +49,36 @@ def create_access_token(
 
     # Add standard JWT claims
     to_encode.update({
-        "exp": expire,                              # Expiration time
-        "iat": now,                                 # Issued at time
-        "type": "access",                           # Token type for validation
-        "jti": secrets.token_urlsafe(16)            # Unique ID for revocation
+        "sub": str(data["user_id"]),
+        "exp": int(expire.timestamp()),            # Expiration time
+        "iat": int(now.timestamp()),               # Issued at time
+        "type": "access",                          # Token type for validation
+        "jti": secrets.token_urlsafe(16)           # Unique ID for revocation
     })
 
     # Sign and return the JWT
-    return jwt.encode(
+    token = jwt.encode(
         claims=to_encode,
         key=SECRET_KEY,
         algorithm=ALGORITHM
     )
 
+    db_token.save_token(
+        jti=to_encode["jti"],
+        user_id=data["user_id"],
+        issued_at=int(now.timestamp()),
+        expires_at=int(expire.timestamp()),
+        token=token,
+        token_type="access_token"
+    )
+
+    return token
 
 def create_refresh_token(
     data: Dict[str, Any],
     expire_time: Optional[timedelta] = None
 ) -> str:
-    """Create a longer-lived refresh token for obtaining new access tokens"""
+    # """Create a longer-lived refresh token for obtaining new access tokens"""
     to_encode = data.copy()
 
     now = datetime.now(timezone.utc)
@@ -75,29 +88,45 @@ def create_refresh_token(
     )
 
     to_encode.update({
-        "exp": expire,
-        "iat": now,
-        "type": "refresh",                    # Distinguishes from access tokens
-        "jti": secrets.token_urlsafe(16)      # Unique ID for rotation tracking
+        "sub": str(data["user_id"]),
+        "exp": int(expire.timestamp()),            # Expiration time
+        "iat": int(now.timestamp()),               # Issued at time
+        "type": "refresh",                         # Token type for validation
+        "jti": secrets.token_urlsafe(16)           # Unique ID for revocation
     })
 
-    return jwt.encode(
+    token = jwt.encode(
         claims=to_encode,
         key=SECRET_KEY,
         algorithm=ALGORITHM
     )
 
+    db_token.save_token(
+        jti=to_encode["jti"],
+        user_id=data["user_id"],
+        issued_at=int(now.timestamp()),
+        expires_at=int(expire.timestamp()),
+        token=token,
+        token_type="refresh_token"
+    )
 
-def decode_token(token: Annotated[str, Depends(oauth2)]) -> Dict[str, Any]:
+    return token
+
+def decode_token(token: str) -> Dict[str, Any]:
     """Decode and validate a JWT token, raising ValueError on failure"""
     try:
         # This also verifies signature and expiration
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        return jwt.decode(token=token, key=SECRET_KEY, algorithms=[ALGORITHM])
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Invalid token")
 
-        return payload
-    except HTTPException:
-        # raise ValueError(f"Invalid token: {e}")
-        raise HTTPException(status_code=400, detail=f"Invalid or expired token")
+def decode_tokens(token: Annotated[str, Depends(oauth2)]) -> Dict[str, Any]:
+    """Decode and validate a JWT token, raising ValueError on failure"""
+    try:
+        # This also verifies signature and expiration
+        return jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+    except JWTError:
+        raise HTTPException(status_code=401, detail=f"Invalid token")
 
 
 @router.post(
@@ -107,29 +136,64 @@ def decode_token(token: Annotated[str, Depends(oauth2)]) -> Dict[str, Any]:
     summary="Generate a new access token"
 )
 def create_token(
-    payload: Request,
     form_data: Annotated[OAuth2PasswordRequestForm, Depends()]
-) -> str:
-    # TODO:
-    # - Check access data into db and throw error in case that pass is
-    # incorrect or user doesn't exist
+) -> Token:
+    user = db_user.get_user(form_data.username)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid credentials",
+            headers={
+                "WWW-Authenticate": "Bearer"
+            }
+        )
+
+    is_valid = db_user.is_valid_password(
+        int(user["user_id"]),
+        form_data.password
+    )
+    if not is_valid:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid credentials",
+            headers={
+                "WWW-Authenticate": "Bearer"
+            }
+        )
+
     # - Generate an access_token
+    access_token = create_access_token({
+        "user_id": str(user["user_id"]),
+        "username": user["username"]
+    })
+
+    # - Generate an refresh_token
+    refresh_token = create_refresh_token({
+        "user_id": str(user["user_id"]),
+        "username": user["username"]
+    })
 
     return {
-        "access_token": "",
-        "refresh_token": "",
+        "access_token": access_token,
+        "refresh_token": refresh_token,
         "token_type": "bearer"
     }
 
-    # return create_access_token(request)
 
 @router.post(
     "/refresh",
+    response_model=Token,
     status_code=status.HTTP_200_OK,
     summary="Generate a new access token after the previous one expires")
 def refresh_token(
-    request: Annotated[dict, Depends(RefreshToken)]
+    request: RefreshToken
 ):
+    data = decode_token(request.refresh_token)
+    response = db_token.get_token_by_jti(data["jti"]) 
+    print(response)
+
     return {
-        "token": "test"
+        "access_token": "Test",
+        "refresh_token": "Test",
+        "token_type": "bearer"
     }

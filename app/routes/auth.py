@@ -18,7 +18,7 @@ router = APIRouter(prefix="/auth", tags=["Authorization"])
 
 
 @router.post(
-    "/token",
+    path="/token",
     response_model=Token,
     status_code=status.HTTP_200_OK,
     summary="Generate a new token"
@@ -26,7 +26,7 @@ router = APIRouter(prefix="/auth", tags=["Authorization"])
 def create_token(
     form_data: Annotated[OAuth2PasswordRequestForm, Depends()]
 ) -> Token:
-    user = db_user.get_user(form_data.username)
+    user = db_user.get_user_by_username(form_data.username)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -65,7 +65,7 @@ def create_token(
 
 
 @router.post(
-    "/refresh",
+    path="/refresh",
     response_model=AccessToken,
     status_code=status.HTTP_200_OK,
     summary="Generate a new access token after the previous one expires")
